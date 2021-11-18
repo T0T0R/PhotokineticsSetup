@@ -1,7 +1,8 @@
 /* Start: April 2021
  *  Interface Serial console / Hamamatsu lamp & motors
  *  UART and RS-232 protocol
- *  Last modification: 11/06/2021
+ *  Last modification: 25/08/2021
+ *  v1.0
  */
 
 #define FILTERA PA8 // Pin used to drive filter A.
@@ -12,12 +13,12 @@
 #define SWITCHA PB14  // Switch controlling the position of filter A in manual mode.
 #define SWITCHB PB15  // Switch controlling the position of filter B in manual mode.
 
-#define LED_MOTORS PA4  // LED indicating the mechanical activity of filters.
+#define LED_COM PA4  // LED indicating the mechanical activity of filters.
 #define LED_MANUAL PA7    // LED indicating that the manual mode is active.
 
 
 HardwareSerial Serial3(PB11, PB10); // Enables UART communication through serial3 ports (RX3=PB11, TX3=PB10).
-//HardwareSerial Serial2(PA3, PA2);
+//HardwareSerial Serial2(PA3, PA2); // This serial interface was used for debug purposes.
 
 
 String computerStr = "";  // Stores the message from the computer.
@@ -35,7 +36,7 @@ bool manualMode = true;
 
 
 
-/*  This function toggles the state of FILTERA and FILTERB  in order to move the connected filters.
+/*  This function toggles the state of FILTERA and FILTERB in order to move the connected filters.
  * A LOW signal will switch it to position POS1, ad HIGH to POS2. 
  */
 void moveFilter(byte const& filter, byte pos){
@@ -47,20 +48,17 @@ void moveFilter(byte const& filter, byte pos){
   }else if (filter==2){
     filterPin = FILTERB;
   }
-
-  digitalWrite(LED_MOTORS, HIGH);
   
   if(pos == 1) digitalWrite(filterPin, LOW);
   else digitalWrite(filterPin, HIGH);
 
-  while (digitalRead(FA_IS_MOVING) || digitalRead(FB_IS_MOVING)) continue;  // Wait until the filter stops moving
-
-  digitalWrite(LED_MOTORS, LOW);
+  while (digitalRead(FA_IS_MOVING) || digitalRead(FB_IS_MOVING)){ // Wait until the filter stops moving.
+  } 
 
   if (filter==1){
-    Serial.write("FAOK\r");
+    Serial.write("MOVAOK\r");
   }else if (filter==2){
-    Serial.write("FBOK\r");
+    Serial.write("MOVBOK\r");
   }
 }
 
@@ -74,7 +72,7 @@ void moveFilter(byte const& filter, byte pos){
 
 
 void setup(){
-  Serial.begin(19200, SERIAL_8N1);   // Communication with the computer: 9600 bauds, 8 data bits, no parity, one stop bit.
+  Serial.begin(9600, SERIAL_8N1);   // Communication with the computer: 9600 bauds, 8 data bits, no parity, one stop bit.
   Serial3.begin(9600, SERIAL_8N1);  // Communication with the Hamamatsu lamp: 9600 bauds, 8 data bits, no parity, one stop bit.
   delay(1000);
   
@@ -87,7 +85,7 @@ void setup(){
   pinMode(SWITCHA, INPUT_PULLDOWN);
   pinMode(SWITCHB, INPUT_PULLDOWN);
 
-  pinMode(LED_MOTORS, OUTPUT);  digitalWrite(LED_MOTORS, LOW);
+  pinMode(LED_COM, OUTPUT);  digitalWrite(LED_COM, LOW);
   pinMode(LED_MANUAL, OUTPUT);  digitalWrite(LED_MANUAL, LOW); 
 }
 
@@ -97,11 +95,12 @@ void setup(){
 
 
 void loop(){
-  digitalWrite(LED_BUILTIN, HIGH); // Turn off the LED monitoring the serial transmission.
+  digitalWrite(LED_BUILTIN, HIGH);  // Turn off the onboard LED.
+  digitalWrite(LED_COM, LOW); // Turn off the LED monitoring the serial transmission.
   
 
   if(Serial.available()){
-    digitalWrite(LED_BUILTIN, LOW);  // Turn on the LED monitoring the serial transmission.
+    digitalWrite(LED_COM, HIGH);  // Turn on the LED monitoring the serial transmission.
     
     computerStr = Serial.readStringUntil('\r')+'\r'; // Captures the incoming instruction (ending with the '\r' character).
 
@@ -123,7 +122,10 @@ void loop(){
       char* buf = (char*) malloc(sizeof(char)*(computerStr.length() + 1)); // Creates a char array buffer to store the string $computerStr$.
       computerStr.toCharArray(buf, computerStr.length() + 1);              // Convert String $computerStr$ to a char array $cString$.
 
-      while (digitalRead(FA_IS_MOVING) || digitalRead(FB_IS_MOVING)) continue;  // If a filter is moving, wait until it stops to send instructions to the lamp. 
+
+      while (digitalRead(FA_IS_MOVING) || digitalRead(FB_IS_MOVING)){  // If a filter is moving, wait until it stops to send instructions to the lamp. 
+      }
+
       
       Serial3.write(buf);
       free(buf);
@@ -145,7 +147,7 @@ void loop(){
  
   //  Transmits messages from the lamp to the computer.
   while(Serial3.available()){
-    digitalWrite(LED_BUILTIN, LOW);  // Turn on the LED monitoring the serial transmission.
+    digitalWrite(LED_COM, HIGH);  // Turn on the LED monitoring the serial transmission.
     Serial.write(Serial3.read());
   }
 
