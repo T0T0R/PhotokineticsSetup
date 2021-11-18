@@ -303,9 +303,11 @@ class Window(tk.Tk):
         # Do not start if the manual mode is used.
         if self.v_manualMode.get():
             self.messagesUI.config(text="Manual mode is on.")
+            self.stopThread()
             return
         if Step1.test or Step2.test or Step3.test or Step4.test or Step5.test:
             self.messagesUI.config(text="A step is being tested.")
+            self.stopThread()
             return            
         else:
             self.messagesUI.config(text="")
