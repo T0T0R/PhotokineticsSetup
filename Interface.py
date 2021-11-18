@@ -1,38 +1,58 @@
+from datetime import datetime
 import time
 import serial
+import serial.tools.list_ports
 import tkinter as tk
 import tkinter.ttk as ttk
+import os
+from threading import Thread
+
+
 
 
 
 
 class SerialCommunication:
-    #ser = None  # open serial port
+    '''
+       Class managing the communication with the lamp over a serial port.
+    '''
+   
     
-    
-    def __init__(self): pass
-        
-            
-    def definePort(self, serialPort):
+    def __init__(self):
+        self.socketDefined = False # Is the serial port defined by the user yet ?
+        self.shutterOpened = False # Is lamp shutter open ?
+
+
+    # Define the port used for this serial communication.
+    def definePort(self, serialPort):   # Use of "try...except" to avoid crashing if the selected port is incorrect.
         try:
             self.ser = serial.Serial(str(serialPort))
+            self.socketDefined = True
         except serial.serialutil.SerialException:
             raise serial.serialutil.SerialException("Incorrect name port")        
     
+    
+    # Begin the communication with the lamp.
     def begin(self):
         self.reset()
-        
-    def stop(self):
-        self.ser.write("PROG_1STEP\r".encode())
-        self.ser.close()
     
+    
+    # Stops the communication with the lamp.
+    def stop(self):
+        if self.socketDefined:
+            self.ser.write("PROG_7STEP\r".encode()) # Set the mode of the lamp back to 7-step (this mode is the one that is usually used when the lamp is turned on).
+            self.ser.close()
+    
+    
+    # Series of instruction to ensure that the microcontroller and the lamp will receive and execute commands.
     def reset(self):
-        self.ser.write("MAN1\r".encode())
-        self.ser.write("INP\r".encode())
-        self.ser.write("CNT1\r".encode())
-        self.ser.write("PROG_1STEP\r".encode())   
+        self.send("MAN1\r")         # Turning off the manual mode of the interface,
+        self.send("INP\r")          # maybe not useful,
+        self.send("CNT1\r")         # control of the lamp via commands,
+        self.send("PROG_1STEP\r")   # set the program mode to 1-step in order to use INTSET*** later.
 
     
+    # Changes the state of the irradiation (light on/off, filter used, intensity).
     def irradiate(self, activate, intensity, filterA, filterB):
         if activate:
             self.moveFilterA(int(filterA))
@@ -44,41 +64,57 @@ class SerialCommunication:
             
             self.shutterOpen()
         else:
+            #print("should see SO")
             self.shutterClose()    
     
     
-    
-    
-    
+    # Set the intensity of the lamp/
     def intSet(self, intensity):
         perc = f'{int(intensity):03}'
         self.send("INTSET"+perc+"\r")
     
+    
+    # Closes the shutter of the lamp.
     def shutterClose(self):
-        self.send("S0\r")
-        
+        if self.shutterOpened:
+            self.send("S0\r")
+            self.shutterOpened = False
+    
+    
+    # Opens the shutter of the lamp. 
     def shutterOpen(self):
-        self.send("S1\r")
-        
+        if not self.shutterOpened:
+            self.send("S1\r")
+            self.shutterOpened = True
+    
+    
+    # Moves the filter A.
     def moveFilterA(self, pos):
         self.send("MOVA"+str(pos)+"\r")
-        
+    
+    
+    # Moves the filter B.
     def moveFilterB(self, pos):
         self.send("MOVB"+str(pos)+"\r")
-        
-    def setFilterA(self, pos):
-        self.send("SETA"+str(pos)+"\r")
-        
-    def setFilterB(self, pos):
-        self.send("SETB"+str(pos)+"\r")        
-        
+               
+    
+    # Send a String to the serial port.
     def send(self, string):
-        self.ser.write(string.encode())
+        print(string)   # For debug purposes, this line can be removed.
+        MyLog.write(string[:-1])
+        self.ser.write(string.encode()) # Converts the unicode string into a byte string.
+    
+    
+    # Returns the state of the serial socket.  
+    def isDefined(self):
+        return self.socketDefined
+    
+    
+    # Returns the name of the port used for serial communication.
+    def getPort(self):
+        return self.ser.port
         
         
-        
-MySerial = SerialCommunication();
-
 
 
 
@@ -87,13 +123,17 @@ MySerial = SerialCommunication();
 
 
 class Step:
-    '''This class contains informations corresponding to a step of irradiation'''
-    stepNo = 0
-    duration = 0
-    perc = 0
-    filterA = 0
-    filterB = 0
-    test = False
+    '''
+       This class contains informations corresponding to one step of irradiation.
+    '''
+    
+    stepNo = 0     # Number of the step.
+    duration = 0   # Duration of the step.
+    perc = 0       # Light intensity of the step.
+    filterA = 0    # Position of the filter A.
+    filterB = 0    # Position of the filter B.
+    test = False   # Test this step by turning on the lamp outside the irradiation sequence to adjust parameters.
+    
     
     def __init__(self, s=0, p=0, d=0, A=0, B=0, test=False):
         self.stepNo = s
@@ -102,7 +142,9 @@ class Step:
         self.filterA = A
         self.filterB = B
         self.test = False
-        
+    
+    
+    # Update the parameters of this step with new values.
     def update(self, intensity, duration, FA, FB, v):
         self.duration = duration
         self.perc = intensity
@@ -113,245 +155,347 @@ class Step:
         else:
             self.test = False
         
-        MySerial.irradiate(self.test, self.perc, self.filterA, self.filterB)
+        if App._thread is None:
+            MySerial.irradiate(self.test, self.perc, self.filterA, self.filterB)
 
 
 
 
-Step1 = Step(1,0,0,1,1)
-Step2 = Step(2,0,0,1,1)
-Step3 = Step(3,0,0,1,1)
-Step4 = Step(4,0,0,1,1)
-Step5 = Step(5,0,0,1,1)
-
-root = tk.Tk ()   # Main window
-default_bg = root.cget('bg')
-#zone_texte  = tkinter.Label (text = "zone de texte")
-#zone_texte.config (text = "second texte")
-#zone_texte.pack ()            # on ajoute l'objet à la fenêtre principale
-
-
-
-
-
-def fnctTest():
-    print("test")
+class SerialWindow(tk.Tk):
+    '''
+       Window used to select the serial port that will be used to communicate with the lamp.
+    '''
+    
+    def __init__(self):
+        tk.Tk.__init__(self)
+        self.addWidgets()
+        
+    
+    # Add all the graphical elements (widgets) in the window.
+    def addWidgets(self):
+        vcmd = (self.register(self.onValidate), '%P')           # Method used to check the validity of user entries.      
+        
+        self.logFilenameLabelUI = tk.Label(text = "Log filename:");            self.logFilenameLabelUI.grid (column = 0, row = 0)
+        self.logFilenameUI = tk.Entry(width=10, validate="all", validatecommand=vcmd);                      self.logFilenameUI.grid (column = 1, row = 0); self.logFilenameUI.insert(0,"log")
+        self.connexionLabelUI = tk.Label(text = "COM port:");            self.connexionLabelUI.grid (column = 0, row = 1)
+        self.connexionListUI = ttk.Combobox(values=[item[0] for item in serial.tools.list_ports.comports()], width=7);  self.connexionListUI.grid (column = 1, row = 1)
+        self.connexionOKUI = tk.Button(text="OK", command=self.validate);   self.connexionOKUI.grid (column = 2, row = 1)
+        self.messagesUI = tk.Label(relief="groove", width=20);                  self.messagesUI.grid(column = 0, columnspan=3, row = 2, rowspan=1)
+        
+    def validate(self):
+        MyLog.update(str(self.logFilenameUI.get()))
+        self.definePort()
     
     
+    # Define the port used for this serial communication.
+    def definePort(self):   # Use of "try...except" to avoid crashing if the selected port is incorrect.
+        try:
+            MySerial.definePort(self.connexionListUI.get())
+            self.messagesUI.config(text="Serial port: "+MySerial.ser.name)
+            MySerial.begin()
+            self.destroy()
+        except serial.serialutil.SerialException:
+            self.messagesUI.config(text="Incorrect serial port: "+self.connexionListUI.get())
+        
+            
+    # Returns the state of the serial socket.     
+    def serialIsOpen(self):
+        return MySerial.isOpen()
     
-    
-def definePort():
-    try:
-        MySerial.definePort(connexionEntryUI.get())
-        messagesUI.config(text="Serial port: "+MySerial.ser.name)
-        MySerial.begin()
-    except serial.serialutil.SerialException:
-        messagesUI.config(text="Incorrect serial port: "+connexionEntryUI.get())
+    #Validation method:
+    def onValidate(self, P):
+        return all(c.isalnum() or (c=="_") or (c=="-") for c in P)  # Only letters, numbers, "_" and "-" in the filename.
+            
+            
+            
+            
+class Log():
+    '''
+       Class designed to produce a log.
+    '''
+    def __init__(self):
+        self.MyLogFileCache = open("log.txt", "a")
+        self.isLogDefined = False
         
         
+    def update(self, filename):
+        if filename != "" and filename != "log":
+            self.MyLogFile = open(filename+".txt", "a")
+            self.isLogDefined = True
+            
+            
+    def writeCache(self, string):
+        now = datetime.now()
+        self.MyLogFileCache.write(now.strftime("%d/%m/%Y %H:%M:%S") + ": " + string + "\n")
+        self.MyLogFileCache.flush()
+        os.fsync(self.MyLogFileCache.fileno())   
+        
+        
+    def write(self, string):
+        if self.isLogDefined:
+            now = datetime.now()
+            self.MyLogFile.write(now.strftime("%d/%m/%Y %H:%M:%S") + ": " + string + "\n")
+            self.MyLogFile.flush()
+            os.fsync(self.MyLogFile.fileno())
+        self.writeCache(string)
 
-
-def startSequence():
-    currentCycle = 0
+        
+    def close(self):
+        if self.isLogDefined:
+            self.MyLogFile.close()
+        self.MyLogFileCache.close()
+        
+        
+        
+        
+            
+            
+class Window(tk.Tk):
+    '''
+       Main window where the irradiation sequence is set.
+    '''
     
+    def __init__(self):
+        tk.Tk.__init__(self)
+        self.addWidgets()
+        self._thread, self._stop = None, True
+        self.lock_steps = False
+
     
-    while currentCycle < int(setNbCyclesUI.get()):
-        for step in [Step1, Step2, Step3, Step4, Step5]:
-            perc,duration = step.perc, int(step.duration)
-            if duration == 0: continue
-            
-            if step == Step1:
-                step1LabelUI.config(bg="yellow"); step2LabelUI.config(bg=default_bg); step3LabelUI.config(bg=default_bg); step4LabelUI.config(bg=default_bg); step5LabelUI.config(bg=default_bg); 
-            if step == Step2:
-                step1LabelUI.config(bg=default_bg); step2LabelUI.config(bg="yellow"); step3LabelUI.config(bg=default_bg); step4LabelUI.config(bg=default_bg); step5LabelUI.config(bg=default_bg); 
-            if step == Step3:
-                step1LabelUI.config(bg=default_bg); step2LabelUI.config(bg=default_bg); step3LabelUI.config(bg="yellow"); step4LabelUI.config(bg=default_bg); step5LabelUI.config(bg=default_bg); 
-            if step == Step4:
-                step1LabelUI.config(bg=default_bg); step2LabelUI.config(bg=default_bg); step3LabelUI.config(bg=default_bg); step4LabelUI.config(bg="yellow"); step5LabelUI.config(bg=default_bg); 
-            if step == Step5:
-                step1LabelUI.config(bg=default_bg); step2LabelUI.config(bg=default_bg); step3LabelUI.config(bg=default_bg); step4LabelUI.config(bg=default_bg); step5LabelUI.config(bg="yellow"); 
-            
-            MySerial.irradiate(True, perc, step.filterA, step.filterB)
-            prevTime = time.time()
-
-            messagesUI.config(text="Cycle " +str(currentCycle+1))
-            
-            while time.time() - prevTime < duration: pass
-                
-            MySerial.irradiate(False, perc, step.filterA, step.filterB)
-            
-        currentCycle +=1    
-
-
-
-def setFilterA():
-    MySerial.setFilterA(setFAListUI.get())
-
-
-def setFilterB():
-    MySerial.setFilterB(setFBListUI.get())
-
-
-
-def updateDuration(): pass
-
-
-
-v_test     = tk.IntVar ()
-v_test.set(0)
-columnLabelIntensityUI = tk.Label(text = "Intensity (%)"); columnLabelIntensityUI.grid (column = 1, row = 0);
-columnLabelDurationUI = tk.Label(text = "Duration (s)"); columnLabelDurationUI.grid (column = 2, row = 0)
-columnLabelFAUI = tk.Label(text = "Filter A");    columnLabelFAUI.grid (column = 3, row = 0)
-columnLabelFBUI = tk.Label(text = "Filter B");    columnLabelFBUI.grid (column = 4, row = 0)
-columnLabelTestUI = tk.Radiobutton(variable = v_test, value = 0, text = "No test");    columnLabelTestUI.grid (column = 5, row = 0)
-
-connexionLabelUI = tk.Label(text = "COM port:");            connexionLabelUI.grid (column = 7, row = 0)
-connexionEntryUI = tk.Entry(width=10);                      connexionEntryUI.grid (column = 8, row = 0)
-connexionOKUI = tk.Button(text="OK", command=definePort);   connexionOKUI.grid (column = 9, row = 0)
-setFALabelUI = tk.Label(text = "Set filter A:");            setFALabelUI.grid (column = 7, row = 1)
-setFAListUI = ttk.Combobox(values=[1,2,3,4,5,6], width=7);  setFAListUI.grid (column = 8, row = 1)
-setFAokUI = tk.Button(text="OK", command=setFilterA);                           setFAokUI.grid (column = 9, row = 1)
-setFBLabelUI = tk.Label(text = "Set filter B:");            setFBLabelUI.grid (column = 7, row = 2)
-setFBListUI = ttk.Combobox(values=[1,2,3,4,5,6], width=7);  setFBListUI.grid (column = 8, row = 2)
-setFBokUI = tk.Button(text="OK", command=setFilterB);                           setFBokUI.grid (column = 9, row = 2)
-setNbCyclesLabelUI = tk.Label(text="Nb cycles:");           setNbCyclesLabelUI.grid (column = 7, row = 3)
-setNbCyclesUI = tk.Entry(width=10);                         setNbCyclesUI.grid (column = 8, row = 3);       setNbCyclesUI.insert(0,"1")
-setCyclesOkUI = tk.Button(text="OK", command=updateDuration);     setCyclesOkUI.grid (column = 9, row = 3)
-
-startUI = tk.Button(text="Start", command=startSequence);                                 startUI.grid (column = 7, row = 4)
-#stopUI = tk.Button(text="Stop", command=stopSequence);                                   stopUI.grid (column = 8, row = 4)
-resetUI = tk.Button(text="Reset", command=MySerial.reset);         resetUI.grid (column = 9, row = 4)
-messagesUI = tk.Label(relief="groove", width=20);                  messagesUI.grid(column = 7, columnspan=3, row = 5, rowspan=1)
-
-
-step1LabelUI = tk.Label(text = "Step 1");                   step1LabelUI.grid (column = 0, row = 1);
-step1IntensityUI = tk.Entry(width=10);                      step1IntensityUI.grid (column = 1, row = 1); step1IntensityUI.insert(0,"0")
-step1DurationUI = tk.Entry(width=10);                       step1DurationUI.grid (column = 2, row = 1);  step1DurationUI.insert(0,"0")
-step1FAUI = ttk.Combobox(values=[1,2,3,4,5,6], width=7);    step1FAUI.grid (column = 3, row = 1);        step1FAUI.current(0)
-step1FBUI = ttk.Combobox(values=[1,2,3,4,5,6], width=7);    step1FBUI.grid (column = 4, row = 1);        step1FBUI.current(0)
-step1TestUI = tk.Radiobutton(variable = v_test, value = 1); step1TestUI.grid (column = 5, row = 1);
-step1OKUI = tk.Button(text="Confirm", command=lambda: Step1.update(step1IntensityUI.get(), step1DurationUI.get(), step1FAUI.get(), step1FBUI.get(), v_test.get()));    step1OKUI.grid (column = 6, row = 1)
-
-step2LabelUI = tk.Label(text = "Step 2");                   step2LabelUI.grid (column = 0, row = 2);
-step2IntensityUI = tk.Entry(width=10);                      step2IntensityUI.grid (column = 1, row = 2); step2IntensityUI.insert(0,"0")
-step2DurationUI = tk.Entry(width=10);                       step2DurationUI.grid (column = 2, row = 2);  step2DurationUI.insert(0,"0")
-step2FAUI = ttk.Combobox(values=[1,2,3,4,5,6], width=7);    step2FAUI.grid (column = 3, row = 2);        step2FAUI.current(0)
-step2FBUI = ttk.Combobox(values=[1,2,3,4,5,6], width=7);    step2FBUI.grid (column = 4, row = 2);        step2FBUI.current(0)
-step2TestUI = tk.Radiobutton(variable = v_test, value = 2); step2TestUI.grid (column = 5, row = 2);
-step2OKUI = tk.Button(text="Confirm", command=lambda: Step2.update(step2IntensityUI.get(), step2DurationUI.get(), step2FAUI.get(), step2FBUI.get(), v_test.get()));    step2OKUI.grid (column = 6, row = 2)
-
-step3LabelUI = tk.Label(text = "Step 3");                   step3LabelUI.grid (column = 0, row = 3);
-step3IntensityUI = tk.Entry(width=10);                      step3IntensityUI.grid (column = 1, row = 3); step3IntensityUI.insert(0,"0")
-step3DurationUI = tk.Entry(width=10);                       step3DurationUI.grid (column = 2, row = 3);  step3DurationUI.insert(0,"0")
-step3FAUI = ttk.Combobox(values=[1,2,3,4,5,6], width=7);    step3FAUI.grid (column = 3, row = 3);        step3FAUI.current(0)
-step3FBUI = ttk.Combobox(values=[1,2,3,4,5,6], width=7);    step3FBUI.grid (column = 4, row = 3);        step3FBUI.current(0)
-step3TestUI = tk.Radiobutton(variable = v_test, value = 3); step3TestUI.grid (column = 5, row = 3);
-step3OKUI = tk.Button(text="Confirm", command=lambda: Step3.update(step3IntensityUI.get(), step3DurationUI.get(), step3FAUI.get(), step3FBUI.get(), v_test.get()));    step3OKUI.grid (column = 6, row = 3)
-
-step4LabelUI = tk.Label(text = "Step 4");                   step4LabelUI.grid (column = 0, row = 4);
-step4IntensityUI = tk.Entry(width=10);                      step4IntensityUI.grid (column = 1, row = 4); step4IntensityUI.insert(0,"0")
-step4DurationUI = tk.Entry(width=10);                       step4DurationUI.grid (column = 2, row = 4);  step4DurationUI.insert(0,"0")
-step4FAUI = ttk.Combobox(values=[1,2,3,4,5,6], width=7);    step4FAUI.grid (column = 3, row = 4);        step4FAUI.current(0)
-step4FBUI = ttk.Combobox(values=[1,2,3,4,5,6], width=7);    step4FBUI.grid (column = 4, row = 4);        step4FBUI.current(0)
-step4TestUI = tk.Radiobutton(variable = v_test, value = 4); step4TestUI.grid (column = 5, row = 4);
-step4OKUI = tk.Button(text="Confirm", command=lambda: Step4.update(step4IntensityUI.get(), step4DurationUI.get(), step4FAUI.get(), step4FBUI.get(), v_test.get()));    step4OKUI.grid (column = 6, row = 4)
-
-step5LabelUI = tk.Label(text = "Step 5");                   step5LabelUI.grid (column = 0, row = 5);
-step5IntensityUI = tk.Entry(width=10);                      step5IntensityUI.grid (column = 1, row = 5); step5IntensityUI.insert(0,"0")
-step5DurationUI = tk.Entry(width=10);                       step5DurationUI.grid (column = 2, row = 5);  step5DurationUI.insert(0,"0")
-step5FAUI = ttk.Combobox(values=[1,2,3,4,5,6], width=7);    step5FAUI.grid (column = 3, row = 5);        step5FAUI.current(0)
-step5FBUI = ttk.Combobox(values=[1,2,3,4,5,6], width=7);    step5FBUI.grid (column = 4, row = 5);        step5FBUI.current(0)
-step5TestUI = tk.Radiobutton(variable = v_test, value = 5); step5TestUI.grid (column = 5, row = 5);
-step5OKUI = tk.Button(text="Confirm", command=lambda: Step5.update(step5IntensityUI.get(), step5DurationUI.get(), step5FAUI.get(), step5FBUI.get(), v_test.get()));    step5OKUI.grid (column = 6, row = 5)
-
-
-root.mainloop ()       # on affiche enfin la fenêtre principale et on attend
-                       # les événements (souris, clic, clavier)
-
-
-
-ser.write("INP\r".encode())
-ser.write("CNT1\r".encode())
-ser.write("PROG_1STEP\r".encode())
-
-
-
-
-
-
-
-
-tempStr = ""
-stepNo = 1
-steps=[]
-nbCycles=0
-shutterOpen()
-while True:
-    while True:
-        tempStr = input("Step "+str(stepNo)+" - Output percentage (ok to confirm): ")
-        if tempStr == "ok":
-            break
+    # Changes the displayed color of a step.
+    def colorStep(self, number, color):
+        default_bg = self.cget('bg') # Store the default color of the initial background.
+        
+        if number == 1:
+            self.step1LabelUI.config(bg=color); self.step2LabelUI.config(bg=default_bg); self.step3LabelUI.config(bg=default_bg); self.step4LabelUI.config(bg=default_bg); self.step5LabelUI.config(bg=default_bg); 
+        elif number == 2:
+            self.step1LabelUI.config(bg=default_bg); self.step2LabelUI.config(bg=color); self.step3LabelUI.config(bg=default_bg); self.step4LabelUI.config(bg=default_bg); self.step5LabelUI.config(bg=default_bg); 
+        elif number == 3:
+            self.step1LabelUI.config(bg=default_bg); self.step2LabelUI.config(bg=default_bg); self.step3LabelUI.config(bg=color); self.step4LabelUI.config(bg=default_bg); self.step5LabelUI.config(bg=default_bg); 
+        elif number == 4:
+            self.step1LabelUI.config(bg=default_bg); self.step2LabelUI.config(bg=default_bg); self.step3LabelUI.config(bg=default_bg); self.step4LabelUI.config(bg=color); self.step5LabelUI.config(bg=default_bg); 
+        elif number == 5:
+            self.step1LabelUI.config(bg=default_bg); self.step2LabelUI.config(bg=default_bg); self.step3LabelUI.config(bg=default_bg); self.step4LabelUI.config(bg=default_bg); self.step5LabelUI.config(bg=color); 
         else:
-            perc = tempStr
-        intSet(perc)
-    
-    duration = int(input("Duration (sec): "))
-    steps.append([perc,duration])
-    
-    if input("Stop now? (y/n): ")=="y":
-        break
-    stepNo +=1
-    
-    
-    
-    
-shutterClose()  
-print(steps)
-
-
-
-
-tempStr = input("Nb of cycles (0 to stop): ")
-if tempStr != 0:
-    nbCycles = int(tempStr)
-    currentCycle = 0
-    
-    
-    while currentCycle < nbCycles:
-        for step in steps:
-            perc,duration = step
+            self.step1LabelUI.config(bg=default_bg); self.step2LabelUI.config(bg=default_bg); self.step3LabelUI.config(bg=default_bg); self.step4LabelUI.config(bg=default_bg); self.step5LabelUI.config(bg=default_bg); 
+              
+        self.update()
             
-            intSet(perc)
-            prevTime = time.time()
-            while time.time() - prevTime < 5: pass   # Wait for the intensity to reach the command (about 5 sec).
             
-            prevTime = time.time()
-            shutterOpen()
-            print("Cycle " +str(currentCycle+1)+ ", step: " +perc+ "%, " + str(duration) + " s.")
+    def startThread(self):
+        if self._thread is None:
+            self._stop = False
+            self._thread = Thread(target=self.startSequence)
+            self._thread.start()
             
-            while time.time() - prevTime < duration: pass
+    def stopThread(self):
+        if self._thread is not None:
+            self._stop = True
+            self._thread = None
+   
+       
+    
+    
+    # Irradiation sequence.
+    def startSequence(self):
+        # Access data from a thread: need to lock these data
+        self.lock_steps = True
+        # Do not start if the manual mode is used.
+        if self.v_manualMode.get():
+            self.messagesUI.config(text="Manual mode is on.")
+            return
+        if Step1.test or Step2.test or Step3.test or Step4.test or Step5.test:
+            self.messagesUI.config(text="A step is being tested.")
+            return            
+        else:
+            self.messagesUI.config(text="")
+        nbCycles = int(self.setNbCyclesUI.get())
+        
+        currentCycle = 0
+        
+          
+        while currentCycle < nbCycles:
+            for step in [Step1, Step2, Step3, Step4, Step5]:
+                self.messagesUI.config(text="Processing cycle " +str(currentCycle+1))
                 
-            shutterClose()
-        currentCycle +=1
-            
-        
-ser.write("PROG_7STEP\r".encode())    
+                # Gather informations from the step
+                filterA, filterB = step.filterA, step.filterB
+                number = step.stepNo
+                perc, duration = step.perc, int(step.duration)
+                if duration == 0: continue  # Skip empty steps.
+                
+                self.colorStep(number, "yellow")  # Indicating that intensity is reaching command intensity (closed shutter).             
+                
+                self.lock_steps = False # Steps' data can be modified wgile waiting
+                MySerial.irradiate(True, perc, step.filterA, step.filterB)
+                self.colorStep(number, "green")  # Indiating irradiation (opened shutter).
+                prevTime = time.time()
 
+                while time.time() - prevTime < duration: 
+                    if self._stop:  # If the user hit the "stop" button, exit the method.
+                        self.colorStep(0, None) # Removes the color from the highlighted labels.
+                        return
+                    
+                MySerial.irradiate(False, perc, filterA, filterB)
+                self.lock_steps = True
+            currentCycle +=1
         
+        self.colorStep(0, None) # Removes the color from the highlighted labels.
+        self.messagesUI.config(text=str(self.setNbCyclesUI.get()) + " cycle(s) done.")
+        MyLog.write("*** " + str(self.setNbCyclesUI.get()) + " cycle(s) done.")
+        self.lock_steps = False
+        self._stop = True
+        self._thread = None        
+    
+    
+    
+    
+    # Add all the graphical elements (widgets) in the window.
+    def addWidgets(self):
+        vcmd = (self.register(self.onValidate), '%P')           # Method used to check the validity of user entries.      
+        
+        self.v_test     = tk.IntVar ()  # Contains which step is to be tested.
+        self.v_test.set(0)
+        
+        self.v_manualMode = tk.IntVar() # States if the device is operated manually or through this interface.  
+        self.v_manualMode.set(False)
+        
+        self.columnLabelIntensityUI = tk.Label(text = "Intensity (%)"); self.columnLabelIntensityUI.grid (column = 1, row = 0);
+        self.columnLabelDurationUI = tk.Label(text = "Duration (s)"); self.columnLabelDurationUI.grid (column = 2, row = 0)
+        self.columnLabelFAUI = tk.Label(text = "Filter A");    self.columnLabelFAUI.grid (column = 3, row = 0)
+        self.columnLabelFBUI = tk.Label(text = "Filter B");    self.columnLabelFBUI.grid (column = 4, row = 0)
+        self.columnLabelTestUI = tk.Radiobutton(variable = self.v_test, value = 0, text = "No test", command=self.updateValues);    self.columnLabelTestUI.grid (column = 5, row = 0)
+        
+        self.setManualModeLabelUI = tk.Label(text = "Manual mode");  self.setManualModeLabelUI.grid(column = 8, row = 1)
+        self.setManualModeUI = tk.Checkbutton(variable = self.v_manualMode, command=self.updateManualMode); self.setManualModeUI.grid(column = 9, row = 1)
+        self.setNbCyclesLabelUI = tk.Label(text="Nb cycles:");           self.setNbCyclesLabelUI.grid (column = 7, row = 3)
+        self.setNbCyclesUI = tk.Entry(width=10, validate="all", validatecommand=vcmd);                         self.setNbCyclesUI.grid (column = 8, row = 3);       self.setNbCyclesUI.insert(0,"1")
+        #self.setCyclesOkUI = tk.Button(text="OK", command=self.updateDuration);     self.setCyclesOkUI.grid (column = 9, row = 3)
+        
+        self.startUI = tk.Button(text="Start", command=self.startThread);                                 self.startUI.grid (column = 7, row = 4)
+        self.stopUI = tk.Button(text="Stop", command=self.stopThread);                                   self.stopUI.grid (column = 8, row = 4)
+        self.resetUI = tk.Button(text="Reset", command=MySerial.reset);         self.resetUI.grid (column = 9, row = 4)
+        self.messagesUI = tk.Label(relief="groove", width=20);                  self.messagesUI.grid(column = 7, columnspan=3, row = 5, rowspan=1)
+        
+        
+        self.step1LabelUI = tk.Label(text = "Step 1");                   self.step1LabelUI.grid (column = 0, row = 1);
+        self.step1IntensityUI = tk.Entry(width=10, validate="all", validatecommand=vcmd);                      self.step1IntensityUI.grid (column = 1, row = 1); self.step1IntensityUI.insert(0,"0")
+        self.step1DurationUI = tk.Entry(width=10, validate="all", validatecommand=vcmd);                       self.step1DurationUI.grid (column = 2, row = 1);  self.step1DurationUI.insert(0,"0")
+        self.step1FAUI = ttk.Combobox(values=[1,2], width=7);    self.step1FAUI.grid (column = 3, row = 1);        self.step1FAUI.current(0)
+        self.step1FBUI = ttk.Combobox(values=[1,2], width=7);    self.step1FBUI.grid (column = 4, row = 1);        self.step1FBUI.current(0)
+        self.step1TestUI = tk.Radiobutton(variable = self.v_test, value = 1, command=self.updateValues); self.step1TestUI.grid (column = 5, row = 1);
+        
+        self.step2LabelUI = tk.Label(text = "Step 2");                   self.step2LabelUI.grid (column = 0, row = 2);
+        self.step2IntensityUI = tk.Entry(width=10, validate="all", validatecommand=vcmd);                      self.step2IntensityUI.grid (column = 1, row = 2); self.step2IntensityUI.insert(0,"0")
+        self.step2DurationUI = tk.Entry(width=10, validate="all", validatecommand=vcmd);                       self.step2DurationUI.grid (column = 2, row = 2);  self.step2DurationUI.insert(0,"0")
+        self.step2FAUI = ttk.Combobox(values=[1,2], width=7);    self.step2FAUI.grid (column = 3, row = 2);        self.step2FAUI.current(0)
+        self.step2FBUI = ttk.Combobox(values=[1,2], width=7);    self.step2FBUI.grid (column = 4, row = 2);        self.step2FBUI.current(0)
+        self.step2TestUI = tk.Radiobutton(variable = self.v_test, value = 2, command=self.updateValues); self.step2TestUI.grid (column = 5, row = 2);
+        
+        self.step3LabelUI = tk.Label(text = "Step 3");                   self.step3LabelUI.grid (column = 0, row = 3);
+        self.step3IntensityUI = tk.Entry(width=10, validate="all", validatecommand=vcmd);                      self.step3IntensityUI.grid (column = 1, row = 3); self.step3IntensityUI.insert(0,"0")
+        self.step3DurationUI = tk.Entry(width=10, validate="all", validatecommand=vcmd);                       self.step3DurationUI.grid (column = 2, row = 3);  self.step3DurationUI.insert(0,"0")
+        self.step3FAUI = ttk.Combobox(values=[1,2], width=7);    self.step3FAUI.grid (column = 3, row = 3);        self.step3FAUI.current(0)
+        self.step3FBUI = ttk.Combobox(values=[1,2], width=7);    self.step3FBUI.grid (column = 4, row = 3);        self.step3FBUI.current(0)
+        self.step3TestUI = tk.Radiobutton(variable = self.v_test, value = 3, command=self.updateValues); self.step3TestUI.grid (column = 5, row = 3);
+        
+        self.step4LabelUI = tk.Label(text = "Step 4");                   self.step4LabelUI.grid (column = 0, row = 4);
+        self.step4IntensityUI = tk.Entry(width=10, validate="all", validatecommand=vcmd);                      self.step4IntensityUI.grid (column = 1, row = 4); self.step4IntensityUI.insert(0,"0")
+        self.step4DurationUI = tk.Entry(width=10, validate="all", validatecommand=vcmd);                       self.step4DurationUI.grid (column = 2, row = 4);  self.step4DurationUI.insert(0,"0")
+        self.step4FAUI = ttk.Combobox(values=[1,2], width=7);    self.step4FAUI.grid (column = 3, row = 4);        self.step4FAUI.current(0)
+        self.step4FBUI = ttk.Combobox(values=[1,2], width=7);    self.step4FBUI.grid (column = 4, row = 4);        self.step4FBUI.current(0)
+        self.step4TestUI = tk.Radiobutton(variable = self.v_test, value = 4, command=self.updateValues); self.step4TestUI.grid (column = 5, row = 4);
+        
+        self.step5LabelUI = tk.Label(text = "Step 5");                   self.step5LabelUI.grid (column = 0, row = 5);
+        self.step5IntensityUI = tk.Entry(width=10, validate="all", validatecommand=vcmd);                      self.step5IntensityUI.grid (column = 1, row = 5); self.step5IntensityUI.insert(0,"0")
+        self.step5DurationUI = tk.Entry(width=10, validate="all", validatecommand=vcmd);                       self.step5DurationUI.grid (column = 2, row = 5);  self.step5DurationUI.insert(0,"0")
+        self.step5FAUI = ttk.Combobox(values=[1,2], width=7);    self.step5FAUI.grid (column = 3, row = 5);        self.step5FAUI.current(0)
+        self.step5FBUI = ttk.Combobox(values=[1,2], width=7);    self.step5FBUI.grid (column = 4, row = 5);        self.step5FBUI.current(0)
+        self.step5TestUI = tk.Radiobutton(variable = self.v_test, value = 5, command=self.updateValues); self.step5TestUI.grid (column = 5, row = 5);
+        
+        
+    #Validation method:
+    def onValidate(self, P):
+        return P.isdigit() or P=="" # An empty string is allowed because  it is very convenient to remove the whole content of the entry box. The empty string is then replaced by a 0 in the the updateValues method.
+    
+    
+    # Update the state of the manual mode.
+    def updateManualMode(self):
+        if self.v_manualMode.get():
+            self.setManualModeLabelUI.config(bg="red")
+            MySerial.send("MAN2\r")
+        else:
+            self.setManualModeLabelUI.config(bg=self.cget('bg'))   
+            MySerial.send("MAN1\r")
+        
+        self.update()
+        
+        
+        
+    # Methods called when values have to be updated throught the UI:
+    def updateValuesEvent(self, event):
+        self.updateValues()
+        
+    def updateValues(self):
+        if self.lock_steps: # The steps objects must not be updated when the irradiation thread is accessing them.
+            return
+        
+        # Limiting the intensity percentage between 0 and 100.
+        for stepIntensityUI in [self.step1IntensityUI,self.step2IntensityUI,self.step3IntensityUI,self.step4IntensityUI,self.step5IntensityUI]:
+            if stepIntensityUI.get() == ""  :
+                stepIntensityUI.delete(0,"end")
+                stepIntensityUI.insert(0,"0")            
+            if int(stepIntensityUI.get()) > 100 :
+                stepIntensityUI.delete(0,"end")
+                stepIntensityUI.insert(0,"100")
+            if int(stepIntensityUI.get()) < 0  :
+                stepIntensityUI.delete(0,"end")
+                stepIntensityUI.insert(0,"0")
+        
+        if self.setNbCyclesUI.get() == ""  :
+            self.setNbCyclesUI.delete(0,"end")
+            self.setNbCyclesUI.insert(0,"0")         
+                                
+        Step1.update(self.step1IntensityUI.get(), self.step1DurationUI.get(), self.step1FAUI.get(), self.step1FBUI.get(), self.v_test.get())
+        Step2.update(self.step2IntensityUI.get(), self.step2DurationUI.get(), self.step2FAUI.get(), self.step2FBUI.get(), self.v_test.get())
+        Step3.update(self.step3IntensityUI.get(), self.step3DurationUI.get(), self.step3FAUI.get(), self.step3FBUI.get(), self.v_test.get())
+        Step4.update(self.step4IntensityUI.get(), self.step4DurationUI.get(), self.step4FAUI.get(), self.step4FBUI.get(), self.v_test.get())
+        Step5.update(self.step5IntensityUI.get(), self.step5DurationUI.get(), self.step5FAUI.get(), self.step5FBUI.get(), self.v_test.get())
         
         
         
 
-while ser.isOpen():
-    while ser.inWaiting():
-        ligne = ser.read()
-        print(ligne)
+
+
+
+
+
+
+
+if __name__ == "__main__":
+    MySerial = SerialCommunication();
+    MyLog = Log();
+
+    # Create 5 steps for the sequence.
+    Step1 = Step(1,0,0,1,1)
+    Step2 = Step(2,0,0,1,1)
+    Step3 = Step(3,0,0,1,1)
+    Step4 = Step(4,0,0,1,1)
+    Step5 = Step(5,0,0,1,1)
     
-    chaine=input("\nSaisir une chaine :")+'\r'
-    test = chaine.encode()
-    ser.write(chaine.encode())
+    App = SerialWindow()
+    App.title("Choose a serial port")
+    App.mainloop()
     
-    while ser.inWaiting():
-        ligne = ser.read()
-        print(ligne)    
-ser.close()             # close port
+    MyLog.writeCache("********** Normal start: connected to port " + str(MySerial.getPort()))
+    
+    if MySerial.isDefined():
+        App = Window()
+        App.title("Interface for filters")
+        App.bind("<Any-KeyPress>", App.updateValuesEvent)
+        App.bind("<Button>", App.updateValuesEvent)
+        App.mainloop()    
+
+MyLog.writeCache("********** Normal end.")
+MyLog.close()        
+MySerial.stop()
