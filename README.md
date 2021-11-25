@@ -3,7 +3,7 @@ A microcontroller (STM32F103C8) drives at the same time an Hamamatsu lamp throug
 
 ## Installation
 This script works with Python 3.9.
-The pySerial library must be installed in order to achieve serial communication with the microcontroler:
+The pySerial library must be installed in order to achieve serial communication with the microcontroler. This can be done by typing the following command in the system console:
 ```
 python -m pip install pyserial
 ```
